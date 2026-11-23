@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>打击乐节奏创作工具</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>打击乐节奏创作工具</h1>
+  <div class="presets">
+    <span>预设：</span>
+    <button data-preset="sparse">可行稀疏节奏</button>
+    <button data-preset="overdense">过高密度（不可解）</button>
+    <button data-preset="exclusive">互斥重音（不可解）</button>
+  </div>
+  <div class="actions">
+    <label>种子 <input id="seed" type="number" min="0" max="2147483647"></label>
+    <button id="generate" class="primary">生成节奏</button>
+    <button id="save">保存版本</button>
+    <label>载入 <input id="load-id" placeholder="存档ID" size="8"></label>
+    <button id="load">读取</button>
+  </div>
+</header>
+
+<main>
+  <section id="controls">
+    <h2>全局参数</h2>
+    <div id="global-controls" class="grid-form"></div>
+
+    <h2>声部</h2>
+    <p class="hint">重音条：点击循环 无 → 软重音 → 锁定重音。锁定重音是硬约束，求解失败会进入最小锁定集合。</p>
+    <div id="voices"></div>
+
+    <h2>跨声部关系</h2>
+    <p class="hint">互斥：两声部不得同时（窗口内）击打；齐奏：A 每击 B 必同击；呼应：A 每击后 offset 步 B 必应答。</p>
+    <div id="relations"></div>
+    <div id="relation-add" class="relation-add"></div>
+  </section>
+
+  <section id="results">
+    <h2>结果</h2>
+    <div id="status"></div>
+    <div id="failure" class="hidden"></div>
+    <div id="warnings"></div>
+    <div id="candidates"></div>
+
+    <div id="editor-panel" class="hidden">
+      <h2>编辑所选版本</h2>
+      <p class="hint">点击格子添加/删除击打（锁定重音不可删除）；选中事件后可调力度。每次修改都会重新做硬约束校验。</p>
+      <canvas id="editor-canvas"></canvas>
+      <div class="editor-controls">
+        <label>力度 <input id="vel-slider" type="range" min="0.05" max="1" step="0.01" disabled></label>
+        <span id="selected-info"></span>
+        <button id="validate">校验</button>
+        <button id="audition-edit" class="primary">试听编辑结果</button>
+      </div>
+      <div id="editor-status"></div>
+      <div id="editor-events"></div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <span>内核：欧几里得播种 → 构造式修复 → DFS 搜索 → 切分/重复排序 → 微小时移 → 实际时间终检。失败时返回最小锁定集合，不静默降低要求。</span>
+</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>
