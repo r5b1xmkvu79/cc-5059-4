@@ -11,6 +11,14 @@ const state = {
   chosenId: null,
   edited: null,
   selected: -1,
+  variation: {
+    protoEvents: null,
+    protoLabel: "",
+    bars: [],
+    voices: [],
+    landing: [],
+    result: null,
+  },
   play: { ctx: null, nodes: [], raf: 0, start: 0, duration: 0, canvas: null, drawInfo: null },
 };
 
@@ -204,6 +212,9 @@ async function generate() {
   document.getElementById("candidates").innerHTML = "";
   document.getElementById("warnings").innerHTML = "";
   document.getElementById("editor-panel").classList.add("hidden");
+  document.getElementById("variation-panel").classList.add("hidden");
+  state.variation.protoEvents = null;
+  state.variation.result = null;
   document.querySelectorAll(".voice-row").forEach(r => r.classList.remove("conflict"));
   let resp;
   try {
@@ -281,6 +292,7 @@ function renderCandidates() {
         <button class="b-stop">停止</button>
         <button class="b-ref">设为基准</button>
         <button class="b-edit">选择并编辑</button>
+        <button class="b-proto">作为变奏原型</button>
       </div>`;
     card.appendChild(head);
 
@@ -340,6 +352,7 @@ function renderCandidates() {
       setStatus(`候选 #${cand.id + 1} 已设为对比基准`, "ok");
     };
     head.querySelector(".b-edit").onclick = () => chooseForEdit(cand.id);
+    head.querySelector(".b-proto").onclick = () => choosePrototype(cand.id);
 
     box.appendChild(card);
   });
@@ -710,6 +723,291 @@ async function auditionEdited() {
   }
 }
 
+/* ---------------- 保留主型的变奏与填充 ---------------- */
+
+const VARIATION_FIELDS = [
+  ["min_distance", "变奏距离下限", 0, 128, 1],
+  ["max_distance", "变奏距离上限", 1, 128, 1],
+  ["fill_end_budget", "末拍占用预算", 0, 64, 1],
+  ["velocity_delta", "力度调整幅度", 0, 0.5, 0.02],
+  ["disp_window", "位移配对窗口(步)", 1, 32, 1],
+];
+
+function choosePrototype(id) {
+  const cand = state.candidates.find(c => c.id === id);
+  if (!cand) return;
+  const v = state.variation;
+  v.protoEvents = cand.events.map(e => ({ ...e }));
+  v.protoLabel = `候选 #${cand.id + 1}（${cand.events.length} 击）`;
+  v.bars = [Math.max(0, state.config.bars - 1)];
+  v.voices = enabledVoices().map(x => x.name);
+  v.landing = [];
+  v.result = null;
+  buildVariationControls();
+  document.getElementById("variation-panel").classList.remove("hidden");
+  document.getElementById("variation-panel").scrollIntoView({ behavior: "smooth" });
+  setVariationStatus(`原型已取 ${v.protoLabel}：区外事件与骨架将硬保留`, "ok");
+}
+
+function buildVariationControls() {
+  const v = state.variation;
+  const box = document.getElementById("variation-controls");
+  box.innerHTML = "";
+
+  const barLab = document.createElement("label");
+  barLab.textContent = "变奏小节（多选）";
+  const barBox = document.createElement("div");
+  barBox.style.display = "flex";
+  barBox.style.gap = "6px";
+  for (let b = 0; b < state.config.bars; b++) {
+    const lab = document.createElement("label");
+    lab.style.color = "var(--text)";
+    lab.innerHTML = `<input type="checkbox" class="v-bar" value="${b}" ${v.bars.includes(b) ? "checked" : ""}> 第${b + 1}小节`;
+    lab.querySelector("input").onchange = e => {
+      const bv = parseInt(e.target.value);
+      v.bars = e.target.checked ? [...v.bars, bv].sort((a, c) => a - c)
+        : v.bars.filter(x => x !== bv);
+    };
+    barBox.appendChild(lab);
+  }
+  barLab.appendChild(barBox);
+  box.appendChild(barLab);
+
+  for (const [key, label, min, max, step] of VARIATION_FIELDS) {
+    const cur = v[key] !== undefined ? v[key] :
+      (key === "min_distance" ? 2 : key === "max_distance" ? 12 :
+       key === "fill_end_budget" ? 2 : key === "velocity_delta" ? 0.2 :
+       Math.max(1, state.config.steps_per_bar / 4));
+    v[key] = cur;
+    const lab = document.createElement("label");
+    lab.textContent = label;
+    const inp = document.createElement("input");
+    inp.type = "number"; inp.min = min; inp.max = max; inp.step = step; inp.value = cur;
+    inp.onchange = () => { v[key] = parseFloat(inp.value); };
+    lab.appendChild(inp);
+    box.appendChild(lab);
+  }
+
+  const keepLab = document.createElement("label");
+  keepLab.textContent = "关键重音";
+  keepLab.innerHTML += `<label style="color:var(--text)"><input type="checkbox" class="v-keepsoft" checked> 软重音一并锁定</label>`;
+  keepLab.querySelector(".v-keepsoft").onchange = e => { v.keepSoft = e.target.checked; };
+  v.keepSoft = v.keepSoft !== false;
+  box.appendChild(keepLab);
+
+  const vbox = document.getElementById("variation-voices");
+  vbox.innerHTML = "<span class='hint'>参与变奏声部：</span>";
+  for (const voice of enabledVoices()) {
+    const lab = document.createElement("label");
+    lab.innerHTML = `<input type="checkbox" class="v-voice" value="${voice.name}" ${v.voices.includes(voice.name) ? "checked" : ""}> ${voice.name}`;
+    lab.querySelector("input").onchange = e => {
+      const nm = e.target.value;
+      v.voices = e.target.checked ? [...v.voices, nm] : v.voices.filter(x => x !== nm);
+    };
+    vbox.appendChild(lab);
+  }
+
+  const lbox = document.getElementById("variation-landing");
+  lbox.innerHTML = "<span class='hint'>乐句落点（进入下一乐句必须命中的事件）：</span> ";
+  const selV = document.createElement("select");
+  for (const voice of enabledVoices()) selV.add(new Option(voice.name, voice.name));
+  const inpS = document.createElement("input");
+  inpS.type = "number"; inpS.min = 0; inpS.max = totalSteps() - 1; inpS.placeholder = "步号";
+  inpS.style.width = "80px";
+  const addBtn = document.createElement("button");
+  addBtn.textContent = "添加落点";
+  addBtn.onclick = () => {
+    const step = parseInt(inpS.value);
+    if (Number.isNaN(step) || step < 0 || step >= totalSteps()) {
+      setVariationStatus("落点步号越界", "error"); return;
+    }
+    if (v.landing.some(x => x.voice === selV.value && x.step === step)) return;
+    v.landing.push({ voice: selV.value, step });
+    inpS.value = "";
+    renderLandingChips();
+  };
+  lbox.appendChild(selV); lbox.appendChild(inpS); lbox.appendChild(addBtn);
+  renderLandingChips();
+
+  document.getElementById("variation-proto-info").textContent =
+    `原型：${v.protoLabel || "未选择"}`;
+}
+
+function renderLandingChips() {
+  const lbox = document.getElementById("variation-landing");
+  lbox.querySelectorAll(".chip").forEach(x => x.remove());
+  for (const item of state.variation.landing) {
+    const chip = document.createElement("span");
+    chip.className = "chip landing";
+    chip.textContent = `${item.voice}@${item.step} ✕`;
+    chip.onclick = () => {
+      state.variation.landing = state.variation.landing.filter(
+        x => !(x.voice === item.voice && x.step === item.step));
+      renderLandingChips();
+    };
+    lbox.appendChild(chip);
+  }
+}
+
+function setVariationStatus(msg, cls = "") {
+  const el = document.getElementById("variation-status");
+  el.textContent = msg;
+  el.className = cls;
+}
+
+async function runVariation() {
+  const v = state.variation;
+  if (!v.protoEvents) {
+    setVariationStatus("请先在候选卡片上选择「作为变奏原型」", "error");
+    return;
+  }
+  if (!v.bars.length) {
+    setVariationStatus("至少选择一个变奏小节", "error");
+    return;
+  }
+  if (!v.voices.length) {
+    setVariationStatus("至少选择一个参与声部", "error");
+    return;
+  }
+  if (v.min_distance > v.max_distance) {
+    setVariationStatus("变奏距离下限不能大于上限", "error");
+    return;
+  }
+  stopAudio();
+  setVariationStatus("约束搜索变奏中（staged 与 joint 同空间对照）…");
+  const payload = {
+    config: state.config,
+    prototype: v.protoEvents,
+    variation: {
+      bars: v.bars, voices: v.voices,
+      min_distance: v.min_distance, max_distance: v.max_distance,
+      fill_end_budget: v.fill_end_budget, velocity_delta: v.velocity_delta,
+      disp_window: v.disp_window, keep_soft: v.keepSoft,
+      landing: v.landing,
+    },
+  };
+  let resp;
+  try {
+    resp = await api("/api/variate", payload);
+  } catch (e) {
+    setVariationStatus("变奏请求失败：" + e.message, "error");
+    return;
+  }
+  if (resp.status !== "ok") {
+    setVariationStatus(`${resp.message || "变奏预算内无接受候选"}：${(resp.reasons || []).join("；")}`, "error");
+    document.getElementById("variation-results").innerHTML = "";
+    return;
+  }
+  v.result = resp;
+  const anyAccepted = Object.values(resp.strategies)
+    .some(o => (o.accepted || []).length > 0);
+  setVariationStatus(anyAccepted
+    ? "变奏完成：接受/舍弃原因与逐项变化如下，可分别试听对照"
+    : "预算内无接受候选：下列候选全部被舍弃，展开可查看原因并试听核对",
+    anyAccepted ? "ok" : "error");
+  renderVariationResult(resp);
+}
+
+function renderVariationResult(resp) {
+  const skelBox = document.getElementById("variation-skeleton");
+  skelBox.innerHTML = "<span class='hint'>硬保留骨架：</span>" +
+    resp.skeleton.map(s => {
+      const cls = s.reason.includes("锁定") ? "locked"
+        : s.reason.includes("落点") ? "landing" : "soft";
+      return `<span class="chip ${cls}" title="${s.reason}">${s.voice}@${s.step} · ${s.reason}</span>`;
+    }).join("");
+
+  const cmp = document.getElementById("variation-comparison");
+  cmp.innerHTML = "<b>策略对照</b><ul>" +
+    resp.comparison.lines.map(x => `<li>${x}</li>`).join("") + "</ul>" +
+    `<div class="hint">优胜策略：${resp.comparison.winner === "tie" ? "平手" :
+      (resp.comparison.winner === "joint" ? "约束搜索同时决定变奏与收束" : "先锁强拍再配填充")}</div>`;
+
+  const box = document.getElementById("variation-results");
+  box.innerHTML = "";
+  for (const [skey, label] of [["staged", "策略 A：先锁强拍再配填充"],
+                               ["joint", "策略 B：约束搜索同时决定变奏与收束"]]) {
+    const o = resp.strategies[skey];
+    if (!o) continue;
+    const sec = document.createElement("div");
+    sec.className = "var-strategy" +
+      (resp.comparison.winner === skey ? " winner" : "");
+    sec.innerHTML = `<h3>${label} — 枚举 ${o.summary.variants}，接受 ${o.summary.accepted}，舍弃 ${o.summary.rejected}</h3>`;
+    o.accepted.forEach((cand, i) => sec.appendChild(variationCandidate(cand, true, i)));
+    if (o.rejected.length) {
+      const det = document.createElement("details");
+      det.innerHTML = `<summary>被舍弃候选（${o.rejected.length}，含原因，可试听核对）</summary>`;
+      o.rejected.forEach((cand, i) => det.appendChild(variationCandidate(cand, false, i)));
+      sec.appendChild(det);
+    }
+    box.appendChild(sec);
+  }
+}
+
+function variationCandidate(cand, accepted, idx) {
+  const wrap = document.createElement("div");
+  wrap.className = "var-cand" + (accepted ? "" : " rejected");
+  const d = cand.distance;
+  const meta = [
+    `距离 总${d.total}（+${d.added} 增 / -${d.removed} 删 / 移${d.displaced}·${d.displacement_steps}步 / 力${d.velocity_changes}）`,
+    `末拍 ${cand.fill_end.hits.length}/${cand.fill_end.budget}`,
+    `切分 ${cand.scores.syncopation} · 重复 ${cand.scores.repetition}`,
+  ].join("　");
+  const head = document.createElement("div");
+  head.className = "meta";
+  head.innerHTML = `<b>${accepted ? "接受" : "舍弃"} #${idx + 1}</b><span>${meta}</span>`;
+  wrap.appendChild(head);
+
+  if (!accepted) {
+    const rs = document.createElement("div");
+    rs.className = "reasons";
+    rs.textContent = "舍弃原因：" + cand.reasons.join("；");
+    wrap.appendChild(rs);
+  }
+
+  const landing = document.createElement("div");
+  landing.className = "meta";
+  landing.innerHTML = cand.landing.map(l =>
+    `落点 ${l.voice}@${l.step}：${l.hit ? "<span class='ok'>命中</span>" : "<span class='denied'>缺失</span>"}`).join("　");
+  if (cand.landing.length) wrap.appendChild(landing);
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "lanes";
+  wrap.appendChild(canvas);
+  drawLanes(canvas, cand.events, {});
+
+  const acts = document.createElement("div");
+  acts.className = "var-actions";
+  const play = document.createElement("button");
+  play.textContent = "试听" + (accepted ? "接受候选" : "舍弃候选");
+  play.className = accepted ? "primary" : "";
+  play.onclick = () => playEvents(cand.events, canvas, null, cand);
+  const protoBtn = document.createElement("button");
+  protoBtn.textContent = "试听原型对照";
+  protoBtn.onclick = () => playEvents(state.variation.protoEvents, canvas, null, null);
+  acts.appendChild(play); acts.appendChild(protoBtn);
+  wrap.appendChild(acts);
+
+  const det = document.createElement("details");
+  det.className = "change-list";
+  const denied = cand.changes.filter(c => !c.allowed).length;
+  det.innerHTML = `<summary>逐项变化（${cand.changes.length} 项${denied ? `，<span class="denied">${denied} 项越界</span>` : "，全部在允许范围"}）</summary>` +
+    "<ul>" + cand.changes.map(c =>
+      `<li class="${c.allowed ? "ok" : "denied"}">${c.allowed ? "✓" : "✗"} ${c.voice}@${c.step} — ${c.detail}（${c.kind}）</li>`
+    ).join("") + "</ul>";
+  wrap.appendChild(det);
+
+  if (cand.boundary.checks.length) {
+    const bc = document.createElement("div");
+    bc.className = "boundary-list";
+    bc.innerHTML = "跨边界实际间隔核验：" + cand.boundary.checks.map(c =>
+      `${c.scope} <span class="${c.ok ? "ok" : "fail"}">${c.gap_ms}ms / 要求 ${c.required_ms}ms ${c.ok ? "通过" : "不足"}</span>`
+    ).join("；");
+    wrap.appendChild(bc);
+  }
+  return wrap;
+}
+
 /* ---------------- 保存 / 载入 ---------------- */
 
 async function saveVersion() {
@@ -796,6 +1094,7 @@ async function init() {
   };
   document.getElementById("validate").onclick = validateEdited;
   document.getElementById("audition-edit").onclick = auditionEdited;
+  document.getElementById("run-variate").onclick = runVariation;
   document.addEventListener("keydown", ev => {
     if (ev.key === "Delete" || ev.key === "Backspace") {
       if (document.activeElement.tagName !== "INPUT") deleteSelected();

@@ -15,6 +15,7 @@ from .model import config_from_dict, config_to_dict, default_config, VOICE_CATAL
 from .solver import SolveFailure, generate
 from .synth import render
 from .timing import validate_actual, apply_timing
+from .variation import VariationFailure, variate
 from .model import Event
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -166,6 +167,20 @@ class Handler(BaseHTTPRequestHandler):
                     })
                 result.update({"status": "ok", "config": config_to_dict(cfg),
                                "seed": cfg.seed})
+                return _json(self, 200, result)
+
+            if url.path == "/api/variate":
+                cfg = config_from_dict(body.get("config", {}))
+                try:
+                    result = variate(cfg, body.get("prototype", []),
+                                     body.get("variation", {}))
+                except VariationFailure as vf:
+                    return _json(self, 200, {
+                        "status": vf.kind, "message": vf.message,
+                        "reasons": vf.reasons,
+                        "config": config_to_dict(cfg),
+                    })
+                result.update({"config": config_to_dict(cfg), "seed": cfg.seed})
                 return _json(self, 200, result)
 
             if url.path == "/api/audition":

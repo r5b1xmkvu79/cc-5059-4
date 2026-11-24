@@ -59,6 +59,23 @@
       <div id="editor-status"></div>
       <div id="editor-events"></div>
     </div>
+
+    <div id="variation-panel" class="hidden">
+      <h2>保留主型的变奏与填充</h2>
+      <p class="hint">在指定小节内调整击打，锁定重音/关键重音/乐句落点与区外事件硬保留。
+        末拍占用预算约束收束，跨边界两次击打按实际毫秒核验最短间隔。</p>
+      <div id="variation-controls" class="grid-form"></div>
+      <div id="variation-voices" class="solo-row"></div>
+      <div id="variation-landing"></div>
+      <div class="editor-controls">
+        <button id="run-variate" class="primary">生成变奏（两种策略对照）</button>
+        <span id="variation-proto-info" class="hint"></span>
+      </div>
+      <div id="variation-status"></div>
+      <div id="variation-skeleton"></div>
+      <div id="variation-comparison"></div>
+      <div id="variation-results"></div>
+    </div>
   </section>
 </main>
 

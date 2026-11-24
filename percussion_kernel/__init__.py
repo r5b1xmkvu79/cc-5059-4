@@ -12,6 +12,13 @@ from .model import (
     default_config,
 )
 from .solver import SolveFailure, generate
+from .variation import (
+    VariationFailure,
+    VariationSpec,
+    variate,
+    variation_spec_from_dict,
+    spec_to_dict,
+)
 
 __all__ = [
     "ACCENT_SOFT",
@@ -25,4 +32,9 @@ __all__ = [
     "default_config",
     "SolveFailure",
     "generate",
+    "VariationFailure",
+    "VariationSpec",
+    "variate",
+    "variation_spec_from_dict",
+    "spec_to_dict",
 ]
